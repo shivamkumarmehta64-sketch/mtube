@@ -30,34 +30,64 @@ ipcRenderer.on('media-action', function(event, action) {
 
 // ── SponsorBlock: skip sponsored segments ────────────────────────────────────
 var sponsorBlockCache = {}
+var sponsorBlockCacheKeys = []
+var currentSponsorSegments = []
+var currentVideoId = null
+
 function fetchSponsorSegments(videoId) {
-  if (!videoId || sponsorBlockCache[videoId]) return
+  if (!videoId) return
+  currentVideoId = videoId
+  if (sponsorBlockCache[videoId]) {
+    currentSponsorSegments = Array.isArray(sponsorBlockCache[videoId]) ? sponsorBlockCache[videoId] : []
+    return
+  }
   sponsorBlockCache[videoId] = true
+  sponsorBlockCacheKeys.push(videoId)
+  if (sponsorBlockCacheKeys.length > 50) {
+    delete sponsorBlockCache[sponsorBlockCacheKeys.shift()]
+  }
   var xhr = new XMLHttpRequest()
   xhr.open('GET', 'https://sponsor.ajay.app/api/skipSegments?videoID=' + videoId + '&categories[]=sponsor&categories[]=selfpromo&categories[]=exclusive_access&categories[]=interaction&categories[]=intro&categories[]=outro&categories[]=preview&categories[]=music_offtopic')
   xhr.onload = function() {
     try {
       var segments = JSON.parse(xhr.responseText)
-      if (!segments || !segments.length) return
+      if (!segments || !segments.length) {
+        currentSponsorSegments = []
+        return
+      }
       sponsorBlockCache[videoId] = segments
-      var vi = document.querySelector('video')
-      if (!vi) return
-      vi.addEventListener('timeupdate', function sbCheck() {
-        for (var i = 0; i < segments.length; i++) {
-          var s = segments[i]
+      if (currentVideoId === videoId) currentSponsorSegments = segments
+    } catch (e) {
+      currentSponsorSegments = []
+    }
+  }
+  xhr.send()
+}
+
+var _sbVideo = null
+setInterval(function() {
+  var v = document.querySelector('video')
+  if (v !== _sbVideo) {
+    if (_sbVideo && _sbVideo._sbListener) _sbVideo.removeEventListener('timeupdate', _sbVideo._sbListener)
+    _sbVideo = v
+    if (_sbVideo) {
+      _sbVideo._sbListener = function() {
+        if (!currentSponsorSegments || !currentSponsorSegments.length) return
+        for (var i = 0; i < currentSponsorSegments.length; i++) {
+          var s = currentSponsorSegments[i]
           if (s.segment && s.segment.length === 2) {
             var start = s.segment[0], end = s.segment[1]
-            if (vi.currentTime >= start && vi.currentTime < end) {
-              vi.currentTime = end
+            if (this.currentTime >= start && this.currentTime < end) {
+              this.currentTime = end
               showToast('Sponsor skipped')
             }
           }
         }
-      })
-    } catch (e) {}
+      }
+      _sbVideo.addEventListener('timeupdate', _sbVideo._sbListener)
+    }
   }
-  xhr.send()
-}
+}, 1000)
 
 var _origPushState = history.pushState
 history.pushState = function() {
@@ -400,11 +430,6 @@ try {
   adStyle.textContent += '\n#page-manager > ytd-browse[page-subtype=home] #contents.ytd-rich-grid-renderer > ytd-rich-section-renderer:first-child{display:none!important}'
   document.documentElement.appendChild(adStyle)
 } catch(e) {}
-
-// ── initial video check ──────────────────────────────────────────────────────
-setTimeout(checkForNewVideo, 500)
-
-// ── cleanup on unload ────────────────────────────────────────────────────────
 
 // ── initial video check ──────────────────────────────────────────────────────
 setTimeout(checkForNewVideo, 500)
